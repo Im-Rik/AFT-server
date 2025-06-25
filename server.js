@@ -19,7 +19,7 @@ const SPREADSHEET_ID = process.env.SPREADSHEET_ID;
 const BASE_URL = process.env.BASE_URL; // Gets the live URL from Render
 const FRONTEND_URL = process.env.FRONTEND_URL; // Gets the frontend URL from Render
 const googleClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
-import credentials from './credentials.json' with { type: 'json' };
+import credentials from '/etc/secrets/credentials.json' with { type: 'json' };
 
 app.use(cors());
 app.use(express.json());
