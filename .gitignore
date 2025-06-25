@@ -1,0 +1,9 @@
+# Dependencies
+/node_modules
+
+# Environment files
+.env
+credentials.json
+
+# Production
+/build
