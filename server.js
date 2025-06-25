@@ -14,11 +14,18 @@ dotenv.config();
 
 // --- DEFINE CONSTANTS AT THE TOP ---
 const app = express();
-const port = process.env.PORT || 3001; // Moved this to the top to fix crash
+const port = process.env.PORT || 3001;
 const SPREADSHEET_ID = process.env.SPREADSHEET_ID;
-const BASE_URL = process.env.BASE_URL; // Gets the live URL from Render
-const FRONTEND_URL = process.env.FRONTEND_URL; // Gets the frontend URL from Render
-const googleClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
+const BASE_URL = process.env.BASE_URL;
+const FRONTEND_URL = process.env.FRONTEND_URL;
+
+// NEW: Initialize the OAuth2Client with all required values for the server-side flow.
+const googleClient = new OAuth2Client(
+  process.env.GOOGLE_CLIENT_ID,
+  process.env.GOOGLE_CLIENT_SECRET, // Make sure this is in your .env file
+  `${BASE_URL}/auth/google/callback` // This is for the web flow
+);
+
 import credentials from '/etc/secrets/credentials.json' with { type: 'json' };
 
 app.use(cors());
@@ -37,7 +44,6 @@ async function getSheetsClient() {
   return google.sheets({ version: 'v4', auth });
 }
 
-// --- AUTHENTICATION & MIDDLEWARE ---
 async function findOrCreateUser(profile) {
   const sheets = await getSheetsClient();
   const response = await sheets.spreadsheets.values.get({ spreadsheetId: SPREADSHEET_ID, range: 'Users!A:D' });
@@ -59,7 +65,7 @@ async function findOrCreateUser(profile) {
 
 passport.use(new GoogleStrategy({
     clientID: process.env.GOOGLE_CLIENT_ID, clientSecret: process.env.GOOGLE_CLIENT_SECRET,
-    callbackURL: `${BASE_URL}/auth/google/callback` // This now works correctly
+    callbackURL: `${BASE_URL}/auth/google/callback`
   }, async (accessToken, refreshToken, profile, done) => {
     try { const user = await findOrCreateUser(profile); done(null, user); }
     catch (error) { done(error, null); }
@@ -88,16 +94,75 @@ app.get('/', (req, res) => {
   res.status(200).send('Server is live and running!');
 });
 
+// --- WEB APP AUTH ROUTES (UNCHANGED) ---
 app.get('/auth/google', passport.authenticate('google', { scope: ['profile', 'email'] }));
 
 app.get('/auth/google/callback', 
   passport.authenticate('google', { failureRedirect: `${FRONTEND_URL}/login?error=true`, session: false }),
   (req, res) => {
     const token = jwt.sign({ userId: req.user.userId, email: req.user.email, name: req.user.name, role: req.user.role }, process.env.JWT_SECRET, { expiresIn: '7d' });
-    // **FIXED:** Redirects to the dynamic frontend URL
     res.redirect(`${FRONTEND_URL}/auth/callback?token=${token}`);
 });
 
+// --- MOBILE APP AUTH ROUTES ---
+
+// DEPRECATED: We are no longer using the /token endpoint for the mobile app.
+app.post('/auth/google/token', (req, res) => {
+    res.status(404).json({ message: 'This endpoint is deprecated. Use /auth/google/code instead.' });
+});
+
+// NEW: The new endpoint for the mobile app's serverAuthCode flow
+app.post('/auth/google/code', async (req, res) => {
+  try {
+    const { code } = req.body;
+    if (!code) {
+      return res.status(400).json({ message: 'Server auth code not provided.' });
+    }
+
+    // Exchange the code for tokens on the server
+    const { tokens } = await googleClient.getToken(code);
+    const idToken = tokens.id_token;
+
+    if (!idToken) {
+      return res.status(401).json({ message: 'Could not retrieve ID token from Google.' });
+    }
+
+    // Verify the ID token to get the user's profile
+    const ticket = await googleClient.verifyIdToken({
+      idToken,
+      audience: process.env.GOOGLE_CLIENT_ID, // Audience is still your Web Client ID
+    });
+    const googlePayload = ticket.getPayload();
+
+    if (!googlePayload) {
+      return res.status(401).json({ message: 'Invalid Google token.' });
+    }
+    
+    const profile = {
+      id: googlePayload.sub,
+      displayName: googlePayload.name,
+      emails: [{ value: googlePayload.email }],
+    };
+
+    const user = await findOrCreateUser(profile);
+
+    // Issue your app's own JWT token
+    const appToken = jwt.sign(
+      { userId: user.userId, email: user.email, name: user.name, role: user.role },
+      process.env.JWT_SECRET,
+      { expiresIn: '25d' }
+    );
+      
+    res.status(200).json({ token: appToken });
+
+  } catch (error) {
+    console.error("Error during mobile auth code exchange:", error.message);
+    res.status(500).json({ message: `Authentication failed: ${error.message}` });
+  }
+});
+
+
+// --- API ROUTES (UNCHANGED) ---
 app.get('/api/profile', verifyToken, (req, res) => res.json({ user: req.user }));
 
 app.get('/api/users', verifyToken, async (req, res) => {
@@ -107,7 +172,7 @@ app.get('/api/users', verifyToken, async (req, res) => {
     const users = (response.data.values || []).slice(1).map(row => ({ id: row[0], name: row[2], role: row[3] }));
     res.json(users.filter(u => u.id));
   } catch (error) { 
-    console.error("ERROR FETCHING USERS:", error); // Added detailed logging
+    console.error("ERROR FETCHING USERS:", error);
     res.status(500).json({ message: 'Could not fetch users.' }); 
   }
 });
@@ -157,47 +222,6 @@ app.post('/api/payments', verifyToken, async (req, res) => {
     } catch (error) { console.error("Error adding payment:", error); res.status(500).json({ message: 'Could not save payment.' }); }
 });
 
-// Endpoint for mobile app Google Sign-In
-app.post('/auth/google/token', async (req, res) => {
-  try {
-    const { idToken } = req.body;
-    if (!idToken) {
-      return res.status(400).json({ message: 'ID token not provided.' });
-    }
-
-    const ticket = await googleClient.verifyIdToken({
-        idToken,
-        audience: process.env.GOOGLE_CLIENT_ID,
-    });
-    const googlePayload = ticket.getPayload();
-
-    if (!googlePayload) {
-        return res.status(401).json({ message: 'Invalid Google token.' });
-    }
-    
-    const profile = {
-        id: googlePayload.sub,
-        displayName: googlePayload.name,
-        emails: [{ value: googlePayload.email }],
-    };
-
-    const user = await findOrCreateUser(profile);
-
-    const appToken = jwt.sign(
-        { userId: user.userId, email: user.email, name: user.name, role: user.role },
-        process.env.JWT_SECRET,
-        { expiresIn: '25d' }
-    );
-        
-    res.status(200).json({ token: appToken });
-
-  } catch (error) {
-    console.error("Error during mobile auth:", error.message);
-    res.status(401).json({ message: `Authentication failed: ${error.message}` });
-  }
-});
-
-// UNIFIED DASHBOARD DATA ENDPOINT
 app.get('/api/dashboard-data', verifyToken, async (req, res) => {
     try {
         const sheets = await getSheetsClient();
@@ -303,6 +327,7 @@ app.get('/api/dashboard-data', verifyToken, async (req, res) => {
         res.status(500).json({ message: 'Could not fetch dashboard data.' });
     }
 });
+
 
 // --- START SERVER ---
 app.listen(port, () => {
