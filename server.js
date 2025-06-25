@@ -84,6 +84,10 @@ const isAdmin = (req, res, next) => {
 }
 
 // --- ROUTES ---
+app.get('/', (req, res) => {
+  res.status(200).send('Server is live and running!');
+});
+
 app.get('/auth/google', passport.authenticate('google', { scope: ['profile', 'email'] }));
 
 app.get('/auth/google/callback', 
