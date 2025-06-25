@@ -12,11 +12,14 @@ import { OAuth2Client } from 'google-auth-library';
 
 dotenv.config();
 
+// --- DEFINE CONSTANTS AT THE TOP ---
 const app = express();
+const port = process.env.PORT || 3001; // Moved this to the top to fix crash
 const SPREADSHEET_ID = process.env.SPREADSHEET_ID;
+const BASE_URL = process.env.BASE_URL; // Gets the live URL from Render
+const FRONTEND_URL = process.env.FRONTEND_URL; // Gets the frontend URL from Render
 const googleClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
 import credentials from './credentials.json' with { type: 'json' };
-const BASE_URL = process.env.BASE_URL || `http://localhost:${port}`;
 
 app.use(cors());
 app.use(express.json());
@@ -34,7 +37,7 @@ async function getSheetsClient() {
   return google.sheets({ version: 'v4', auth });
 }
 
-// --- AUTHENTICATION & MIDDLEWARE (No Changes) ---
+// --- AUTHENTICATION & MIDDLEWARE ---
 async function findOrCreateUser(profile) {
   const sheets = await getSheetsClient();
   const response = await sheets.spreadsheets.values.get({ spreadsheetId: SPREADSHEET_ID, range: 'Users!A:D' });
@@ -53,15 +56,18 @@ async function findOrCreateUser(profile) {
   }
   return user;
 }
+
 passport.use(new GoogleStrategy({
     clientID: process.env.GOOGLE_CLIENT_ID, clientSecret: process.env.GOOGLE_CLIENT_SECRET,
-    callbackURL: `${BASE_URL}/auth/google/callback`
+    callbackURL: `${BASE_URL}/auth/google/callback` // This now works correctly
   }, async (accessToken, refreshToken, profile, done) => {
     try { const user = await findOrCreateUser(profile); done(null, user); }
     catch (error) { done(error, null); }
 }));
+
 passport.serializeUser((user, done) => done(null, user));
 passport.deserializeUser((user, done) => done(null, user));
+
 const verifyToken = (req, res, next) => {
   const authHeader = req.headers['authorization'];
   const token = authHeader && authHeader.split(' ')[1];
@@ -71,26 +77,37 @@ const verifyToken = (req, res, next) => {
     req.user = user; next();
   });
 };
+
 const isAdmin = (req, res, next) => {
     if(req.user.role !== 'admin') return res.status(403).json({ message: 'Forbidden: Admins only.'});
     next();
 }
+
+// --- ROUTES ---
 app.get('/auth/google', passport.authenticate('google', { scope: ['profile', 'email'] }));
+
 app.get('/auth/google/callback', 
-  passport.authenticate('google', { failureRedirect: 'http://localhost:5173/login?error=true', session: false }),
+  passport.authenticate('google', { failureRedirect: `${FRONTEND_URL}/login?error=true`, session: false }),
   (req, res) => {
     const token = jwt.sign({ userId: req.user.userId, email: req.user.email, name: req.user.name, role: req.user.role }, process.env.JWT_SECRET, { expiresIn: '7d' });
-    res.redirect(`http://localhost:5173/auth/callback?token=${token}`);
+    // **FIXED:** Redirects to the dynamic frontend URL
+    res.redirect(`${FRONTEND_URL}/auth/callback?token=${token}`);
 });
+
 app.get('/api/profile', verifyToken, (req, res) => res.json({ user: req.user }));
+
 app.get('/api/users', verifyToken, async (req, res) => {
   try {
     const sheets = await getSheetsClient();
     const response = await sheets.spreadsheets.values.get({ spreadsheetId: SPREADSHEET_ID, range: 'Users!A:D' });
     const users = (response.data.values || []).slice(1).map(row => ({ id: row[0], name: row[2], role: row[3] }));
     res.json(users.filter(u => u.id));
-  } catch (error) { res.status(500).json({ message: 'Could not fetch users.' }); }
+  } catch (error) { 
+    console.error("ERROR FETCHING USERS:", error); // Added detailed logging
+    res.status(500).json({ message: 'Could not fetch users.' }); 
+  }
 });
+
 app.post('/api/expenses', verifyToken, isAdmin, async (req, res) => {
   try {
     const sheets = await getSheetsClient();
@@ -121,6 +138,7 @@ app.post('/api/expenses', verifyToken, isAdmin, async (req, res) => {
     res.status(201).json({ success: true });
   } catch (error) { console.error("Error adding expense:", error); res.status(500).json({ message: 'Could not add expense.' }); }
 });
+
 app.post('/api/payments', verifyToken, async (req, res) => {
     try {
         const sheets = await getSheetsClient();
@@ -135,7 +153,7 @@ app.post('/api/payments', verifyToken, async (req, res) => {
     } catch (error) { console.error("Error adding payment:", error); res.status(500).json({ message: 'Could not save payment.' }); }
 });
 
-// NEW: Endpoint for mobile app Google Sign-In
+// Endpoint for mobile app Google Sign-In
 app.post('/auth/google/token', async (req, res) => {
   try {
     const { idToken } = req.body;
@@ -143,10 +161,9 @@ app.post('/auth/google/token', async (req, res) => {
       return res.status(400).json({ message: 'ID token not provided.' });
     }
 
-    // Verify the ID token from the mobile app
     const ticket = await googleClient.verifyIdToken({
         idToken,
-        audience: process.env.GOOGLE_CLIENT_ID, // Use your Web Client ID here
+        audience: process.env.GOOGLE_CLIENT_ID,
     });
     const googlePayload = ticket.getPayload();
 
@@ -154,8 +171,6 @@ app.post('/auth/google/token', async (req, res) => {
         return res.status(401).json({ message: 'Invalid Google token.' });
     }
     
-    // We have the user's Google profile, now use your existing logic to find them in the sheet
-    // We'll simulate the 'profile' object that passport.js usually provides
     const profile = {
         id: googlePayload.sub,
         displayName: googlePayload.name,
@@ -164,7 +179,6 @@ app.post('/auth/google/token', async (req, res) => {
 
     const user = await findOrCreateUser(profile);
 
-    // If user is found/created, issue your app's own JWT token
     const appToken = jwt.sign(
         { userId: user.userId, email: user.email, name: user.name, role: user.role },
         process.env.JWT_SECRET,
@@ -179,17 +193,12 @@ app.post('/auth/google/token', async (req, res) => {
   }
 });
 
-
-// #################################################################
-// ########### NEW UNIFIED DASHBOARD DATA ENDPOINT STARTS ############
-// #################################################################
-
+// UNIFIED DASHBOARD DATA ENDPOINT
 app.get('/api/dashboard-data', verifyToken, async (req, res) => {
     try {
         const sheets = await getSheetsClient();
         const loggedInUserId = req.user.userId;
 
-        // --- Step 1: Fetch all data in a single API call using batchGet ---
         const batchGetResponse = await sheets.spreadsheets.values.batchGet({
             spreadsheetId: SPREADSHEET_ID,
             ranges: ['Users!A:D', 'Expenses!A:K', 'Splits!A:D', 'Payments!A:H'],
@@ -202,26 +211,20 @@ app.get('/api/dashboard-data', verifyToken, async (req, res) => {
         const splitRows = (splitsRange.values || []).slice(1);
         const paymentRows = (paymentsRange.values || []).slice(1);
         
-        // --- Step 2: Process all data (calculations are the same, just using local variables) ---
-
-        // Users
         const users = userRows.map(r => ({ id: r[0], name: r[2] })).filter(u => u.id && u.name);
         const userMap = users.reduce((acc, user) => ({ ...acc, [user.id]: user.name }), {});
 
-        // Expenses History
         const expenses = expenseRows.map(row => ({
             id: row[0], date: row[1], description: row[2], category: row[3], subCategory: row[4],
             location: row[5], locationFrom: row[6], locationTo: row[7], amount: parseFloat(row[8]) || 0,
             paidByUserId: row[9], paidByUserName: row[10]
         }));
 
-        // Payments History
         const payments = paymentRows.map(row => ({
             id: row[0], date: row[1], paidByUserId: row[2], paidToUserId: row[3], amount: parseFloat(row[4]) || 0,
             note: row[5], paidByUserName: row[6], paidToUserName: row[7]
         }));
         
-        // Spending Summary
         const spendingSummary = {};
         users.forEach(u => { spendingSummary[u.id] = { name: u.name, totalSpending: 0 }; });
         splitRows.forEach(split => {
@@ -231,7 +234,6 @@ app.get('/api/dashboard-data', verifyToken, async (req, res) => {
         });
         const spendingSummaryArray = Object.values(spendingSummary).sort((a, b) => b.totalSpending - a.totalSpending);
 
-        // Balance Calculations
         const netBalances = {};
         users.forEach(u => netBalances[u.id] = 0);
         expenseRows.forEach(exp => {
@@ -252,7 +254,6 @@ app.get('/api/dashboard-data', verifyToken, async (req, res) => {
             if(netBalances[toUserId] !== undefined) netBalances[toUserId] -= paymentAmount;
         });
         
-        // Simplified Settlements
         const debtors = [];
         const creditors = [];
         Object.entries(netBalances).forEach(([userId, balance]) => {
@@ -281,7 +282,6 @@ app.get('/api/dashboard-data', verifyToken, async (req, res) => {
         youOwe.total = youOwe.breakdown.reduce((sum, item) => sum + item.amount, 0);
         youAreOwed.total = youAreOwed.breakdown.reduce((sum, item) => sum + item.amount, 0);
 
-        // --- Step 3: Send all data back in one JSON object ---
         res.json({
             users,
             expenses,
@@ -290,7 +290,7 @@ app.get('/api/dashboard-data', verifyToken, async (req, res) => {
             balances: {
                 youOwe,
                 youAreOwed,
-                groupSettlements, // Only sending simplified now, detailed can be re-added if needed
+                groupSettlements,
             }
         });
 
@@ -300,9 +300,7 @@ app.get('/api/dashboard-data', verifyToken, async (req, res) => {
     }
 });
 
-
 // --- START SERVER ---
-const port = process.env.PORT || 3001;
 app.listen(port, () => {
   console.log(`Server is running on http://localhost:${port}`);
 });
