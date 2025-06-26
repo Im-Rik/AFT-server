@@ -288,11 +288,58 @@ app.get('/api/dashboard-data', verifyToken, async (req, res) => {
     const users = userRows.map(r => ({ id: r[0], name: r[2] })).filter(u => u.id && u.name);
     const userMap = users.reduce((acc, user) => ({ ...acc, [user.id]: user.name }), {});
 
-    const expenses = expenseRows.map(row => ({
-      id: row[0], date: row[1], description: row[2], category: row[3], subCategory: row[4],
-      location: row[5], locationFrom: row[6], locationTo: row[7], amount: parseFloat(row[8]) || 0,
-      paidByUserId: row[9], paidByUserName: row[10]
-    }));
+    // Group all splits by their corresponding expense ID for efficient lookup
+    const splitsByExpenseId = splitRows.reduce((acc, row) => {
+        const expenseId = row[1];
+        if (!acc[expenseId]) {
+            acc[expenseId] = [];
+        }
+        acc[expenseId].push({
+            userId: row[2],
+            amount: parseFloat(row[3]) || 0
+        });
+        return acc;
+    }, {});
+
+    const expenses = expenseRows.map(row => {
+      const expenseId = row[0];
+      const totalAmount = parseFloat(row[8]) || 0;
+      const splitsForThisExpense = splitsByExpenseId[expenseId] || [];
+      const numPeople = splitsForThisExpense.length;
+      let splitType = 'unknown';
+
+      if (numPeople > 0) {
+        // Check if the split is even by comparing each person's share to the expected average share.
+        // We allow a small tolerance (0.02) for rounding differences.
+        const expectedShare = totalAmount / numPeople;
+        const isEvenSplit = splitsForThisExpense.every(s => Math.abs(s.amount - expectedShare) < 0.02);
+        splitType = isEvenSplit ? 'even' : 'uneven';
+      }
+
+      return {
+        id: expenseId,
+        date: row[1],
+        description: row[2],
+        category: row[3],
+        subCategory: row[4],
+        location: row[5],
+        locationFrom: row[6],
+        locationTo: row[7],
+        amount: totalAmount,
+        paidByUserId: row[9],
+        paidByUserName: row[10],
+        // NEW: Attach a detailed splitDetails object to each expense
+        splitDetails: {
+            type: splitType,
+            numPeople: numPeople,
+            participants: splitsForThisExpense.map(s => ({
+                userId: s.userId,
+                userName: userMap[s.userId] || 'Unknown User',
+                amount: s.amount
+            }))
+        }
+      };
+    });
 
     const payments = paymentRows.map(row => ({
       id: row[0], date: row[1], paidByUserId: row[2], paidToUserId: row[3], amount: parseFloat(row[4]) || 0,
@@ -358,7 +405,7 @@ app.get('/api/dashboard-data', verifyToken, async (req, res) => {
 
     res.json({
       users,
-      expenses,
+      expenses, // This now contains the detailed split info
       payments,
       spendingSummary: spendingSummaryArray,
       balances: {
