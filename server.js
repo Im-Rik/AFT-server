@@ -24,7 +24,9 @@ import credentials from '/etc/secrets/credentials.json' with { type: 'json' };
 // import credentials from './credentials.json' with { type: 'json' };
 
 
-app.use(cors());
+app.use(cors({
+  allowedHeaders: ['Content-Type', 'Authorization']
+}));
 app.use(express.json());
 
 async function getSheetsClient() {
