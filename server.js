@@ -93,7 +93,7 @@ app.post('/auth/manual-login', async (req, res) => {
     }
 
     const payload = { userId, email, name, role };
-    const token = jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: '7d' });
+    const token = jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: '30d' });
 
     res.status(200).json({ token });
 
