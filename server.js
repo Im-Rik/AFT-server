@@ -19,15 +19,13 @@ const SPREADSHEET_ID = process.env.SPREADSHEET_ID;
 // const BASE_URL = process.env.BASE_URL; // Not needed for manual login
 // const FRONTEND_URL = process.env.FRONTEND_URL; // Not needed for manual login
 
-import credentials from '/etc/secrets/credentials.json' with { type: 'json' };
+
+import credentials from '/etc/secrets/credentials.json' with { type: 'json' };  
+// import credentials from './credentials.json' with { type: 'json' };
+
 
 app.use(cors());
 app.use(express.json());
-// app.use(session({ secret: 'trip-expense-tracker-session', resave: false, saveUninitialized: false })); // Not needed for JWT
-// app.use(passport.initialize()); // Not needed
-// app.use(passport.session()); // Not needed
-
-// --- HELPER FUNCTIONS ---
 
 async function getSheetsClient() {
   const auth = new google.auth.JWT({
@@ -55,9 +53,6 @@ const isAdmin = (req, res, next) => {
   next();
 };
 
-// --- NEW MANUAL AUTHENTICATION ---
-// This new endpoint replaces all previous Google auth routes.
-// It handles login requests from both the website and the mobile app.
 app.post('/auth/manual-login', async (req, res) => {
   try {
     const { username, password } = req.body;
@@ -66,7 +61,6 @@ app.post('/auth/manual-login', async (req, res) => {
     }
 
     const sheets = await getSheetsClient();
-    // Fetch user data, including the new HashedPassword column (A:E)
     const response = await sheets.spreadsheets.values.get({
       spreadsheetId: SPREADSHEET_ID,
       range: 'Users!A:E',
@@ -77,7 +71,6 @@ app.post('/auth/manual-login', async (req, res) => {
       return res.status(404).json({ message: 'No users found in the sheet.' });
     }
 
-    // Find the user by their email, which we use as the username
     const userRow = rows.find(row => row[1] && row[1].toLowerCase() === username.toLowerCase());
 
     if (!userRow) {
@@ -91,18 +84,15 @@ app.post('/auth/manual-login', async (req, res) => {
       return res.status(401).json({ message: 'Invalid username or password.' });
     }
 
-    // Securely compare the provided password with the stored hash
     const isMatch = await bcrypt.compare(password, hashedPassword);
 
     if (!isMatch) {
       return res.status(401).json({ message: 'Invalid username or password.' });
     }
 
-    // If password is correct, create and sign a JWT with user details
     const payload = { userId, email, name, role };
     const token = jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: '7d' });
 
-    // Send the token back to the client
     res.status(200).json({ token });
 
   } catch (error) {
@@ -110,100 +100,6 @@ app.post('/auth/manual-login', async (req, res) => {
     res.status(500).json({ message: 'An error occurred during login.' });
   }
 });
-
-
-// --- GOOGLE AUTHENTICATION (DEPRECATED - Kept for future reference) ---
-/*
-const googleClient = new OAuth2Client(
-  process.env.GOOGLE_CLIENT_ID,
-  process.env.GOOGLE_CLIENT_SECRET,
-  `${BASE_URL}/auth/google/callback`
-);
-
-async function findOrCreateUser(profile) {
-  const sheets = await getSheetsClient();
-  const response = await sheets.spreadsheets.values.get({ spreadsheetId: SPREADSHEET_ID, range: 'Users!A:D' });
-  const rows = (response.data.values || []).slice(1);
-  const usersData = rows.map((row, index) => ({
-    rowIndex: index + 2, userId: row[0], email: row[1], name: row[2], role: row[3],
-  }));
-  const user = usersData.find(u => u.email === profile.emails[0].value);
-  if (!user) throw new Error('User not found in the authorized list.');
-  if (!user.userId) {
-    await sheets.spreadsheets.values.update({
-      spreadsheetId: SPREADSHEET_ID, range: `Users!A${user.rowIndex}`,
-      valueInputOption: 'USER_ENTERED', resource: { values: [[profile.id]] },
-    });
-    user.userId = profile.id;
-  }
-  return user;
-}
-
-passport.use(new GoogleStrategy({
-    clientID: process.env.GOOGLE_CLIENT_ID, clientSecret: process.env.GOOGLE_CLIENT_SECRET,
-    callbackURL: `${BASE_URL}/auth/google/callback`
-  }, async (accessToken, refreshToken, profile, done) => {
-    try { const user = await findOrCreateUser(profile); done(null, user); }
-    catch (error) { done(error, null); }
-}));
-
-passport.serializeUser((user, done) => done(null, user));
-passport.deserializeUser((user, done) => done(null, user));
-
-app.get('/auth/google', passport.authenticate('google', { scope: ['profile', 'email'] }));
-
-app.get('/auth/google/callback', 
-  passport.authenticate('google', { failureRedirect: `${FRONTEND_URL}/login?error=true`, session: false }),
-  (req, res) => {
-    const token = jwt.sign({ userId: req.user.userId, email: req.user.email, name: req.user.name, role: req.user.role }, process.env.JWT_SECRET, { expiresIn: '7d' });
-    res.redirect(`${FRONTEND_URL}/auth/callback?token=${token}`);
-});
-
-app.post('/auth/google/token', (req, res) => {
-    res.status(404).json({ message: 'This endpoint is deprecated. Use /auth/google/code instead.' });
-});
-
-app.post('/auth/google/code', async (req, res) => {
-  try {
-    const { code } = req.body;
-    if (!code) {
-      return res.status(400).json({ message: 'Server auth code not provided.' });
-    }
-    const { tokens } = await googleClient.getToken(code);
-    const idToken = tokens.id_token;
-    if (!idToken) {
-      return res.status(401).json({ message: 'Could not retrieve ID token from Google.' });
-    }
-    const ticket = await googleClient.verifyIdToken({
-      idToken,
-      audience: process.env.GOOGLE_CLIENT_ID,
-    });
-    const googlePayload = ticket.getPayload();
-    if (!googlePayload) {
-      return res.status(401).json({ message: 'Invalid Google token.' });
-    }
-    const profile = {
-      id: googlePayload.sub,
-      displayName: googlePayload.name,
-      emails: [{ value: googlePayload.email }],
-    };
-    const user = await findOrCreateUser(profile);
-    const appToken = jwt.sign(
-      { userId: user.userId, email: user.email, name: user.name, role: user.role },
-      process.env.JWT_SECRET,
-      { expiresIn: '25d' }
-    );
-    res.status(200).json({ token: appToken });
-  } catch (error) {
-    console.error("Error during mobile auth code exchange:", error.message);
-    res.status(500).json({ message: `Authentication failed: ${error.message}` });
-  }
-});
-*/
-
-// --- API ROUTES (UNCHANGED) ---
-// These will continue to work perfectly as they only depend on a valid JWT,
-// which our new manual login system now provides.
 
 app.get('/', (req, res) => {
   res.status(200).send('Server is live and running!');
@@ -288,62 +184,88 @@ app.get('/api/dashboard-data', verifyToken, async (req, res) => {
     const users = userRows.map(r => ({ id: r[0], name: r[2] })).filter(u => u.id && u.name);
     const userMap = users.reduce((acc, user) => ({ ...acc, [user.id]: user.name }), {});
 
-    // Group all splits by their corresponding expense ID for efficient lookup
+    const detailedDebts = {};
+    users.forEach(u1 => {
+      detailedDebts[u1.id] = {};
+      users.forEach(u2 => {
+        if (u1.id !== u2.id) detailedDebts[u1.id][u2.id] = 0;
+      });
+    });
+
+    expenseRows.forEach(exp => {
+      const payerId = exp[9];
+      const splitsForThisExpense = splitRows.filter(s => s[1] === exp[0]);
+      splitsForThisExpense.forEach(split => {
+        const owedById = split[2];
+        const shareAmount = parseFloat(split[3]) || 0;
+        if (payerId !== owedById) {
+          detailedDebts[owedById][payerId] += shareAmount;
+        }
+      });
+    });
+
+    paymentRows.forEach(p => {
+      const fromUserId = p[2];
+      const toUserId = p[3];
+      const paymentAmount = parseFloat(p[4]) || 0;
+      detailedDebts[toUserId][fromUserId] += paymentAmount;
+    });
+
+    const finalDetailedDebts = [];
+    users.forEach(u1 => {
+        users.forEach(u2 => {
+            if (u1.id < u2.id) {
+                const debt1to2 = detailedDebts[u1.id][u2.id] || 0;
+                const debt2to1 = detailedDebts[u2.id][u1.id] || 0;
+                const netDebt = debt1to2 - debt2to1;
+                if (netDebt > 0.01) {
+                    finalDetailedDebts.push({ from: u1.id, fromName: userMap[u1.id], to: u2.id, toName: userMap[u2.id], amount: netDebt });
+                } else if (netDebt < -0.01) {
+                    finalDetailedDebts.push({ from: u2.id, fromName: userMap[u2.id], to: u1.id, toName: userMap[u1.id], amount: -netDebt });
+                }
+            }
+        });
+    });
+
     const splitsByExpenseId = splitRows.reduce((acc, row) => {
         const expenseId = row[1];
-        if (!acc[expenseId]) {
-            acc[expenseId] = [];
-        }
-        acc[expenseId].push({
-            userId: row[2],
-            amount: parseFloat(row[3]) || 0
-        });
+        if (!acc[expenseId]) acc[expenseId] = [];
+        acc[expenseId].push({ userId: row[2], amount: parseFloat(row[3]) || 0 });
         return acc;
     }, {});
 
     const expenses = expenseRows.map(row => {
-      const expenseId = row[0];
-      const totalAmount = parseFloat(row[8]) || 0;
+      const expenseId = row[0], totalAmount = parseFloat(row[8]) || 0;
       const splitsForThisExpense = splitsByExpenseId[expenseId] || [];
       const numPeople = splitsForThisExpense.length;
       let splitType = 'unknown';
-
       if (numPeople > 0) {
-        // Check if the split is even by comparing each person's share to the expected average share.
-        // We allow a small tolerance (0.02) for rounding differences.
         const expectedShare = totalAmount / numPeople;
         const isEvenSplit = splitsForThisExpense.every(s => Math.abs(s.amount - expectedShare) < 0.02);
         splitType = isEvenSplit ? 'even' : 'uneven';
       }
-
       return {
-        id: expenseId,
-        date: row[1],
-        description: row[2],
-        category: row[3],
-        subCategory: row[4],
-        location: row[5],
-        locationFrom: row[6],
-        locationTo: row[7],
-        amount: totalAmount,
-        paidByUserId: row[9],
-        paidByUserName: row[10],
-        // NEW: Attach a detailed splitDetails object to each expense
+        id: expenseId, date: row[1], description: row[2], category: row[3], subCategory: row[4],
+        location: row[5], locationFrom: row[6], locationTo: row[7], amount: totalAmount,
+        paidByUserId: row[9], paidByUserName: row[10],
         splitDetails: {
-            type: splitType,
-            numPeople: numPeople,
+            type: splitType, numPeople: numPeople,
             participants: splitsForThisExpense.map(s => ({
-                userId: s.userId,
-                userName: userMap[s.userId] || 'Unknown User',
-                amount: s.amount
+                userId: s.userId, userName: userMap[s.userId] || 'Unknown User', amount: s.amount
             }))
         }
       };
     });
 
     const payments = paymentRows.map(row => ({
-      id: row[0], date: row[1], paidByUserId: row[2], paidToUserId: row[3], amount: parseFloat(row[4]) || 0,
-      note: row[5], paidByUserName: row[6], paidToUserName: row[7]
+      id: row[0],
+      date: row[1],
+      paidByUserId: row[2],
+      paidToUserId: row[3],
+      amount: parseFloat(row[4]) || 0,
+      note: row[5],
+      paidByUserName: row[6],
+      paidToUserName: row[7]
     }));
 
     const spendingSummary = {};
@@ -358,25 +280,20 @@ app.get('/api/dashboard-data', verifyToken, async (req, res) => {
     const netBalances = {};
     users.forEach(u => netBalances[u.id] = 0);
     expenseRows.forEach(exp => {
-      const amount = parseFloat(exp[8]) || 0;
-      const paidBy = exp[9];
+      const amount = parseFloat(exp[8]) || 0, paidBy = exp[9];
       if (netBalances[paidBy] !== undefined) netBalances[paidBy] += amount;
     });
     splitRows.forEach(split => {
-      const owedBy = split[2];
-      const shareAmount = parseFloat(split[3]) || 0;
+      const owedBy = split[2], shareAmount = parseFloat(split[3]) || 0;
       if (netBalances[owedBy] !== undefined) netBalances[owedBy] -= shareAmount;
     });
     paymentRows.forEach(p => {
-      const fromUserId = p[2];
-      const toUserId = p[3];
-      const paymentAmount = parseFloat(p[4]) || 0;
+      const fromUserId = p[2], toUserId = p[3], paymentAmount = parseFloat(p[4]) || 0;
       if (netBalances[fromUserId] !== undefined) netBalances[fromUserId] += paymentAmount;
       if (netBalances[toUserId] !== undefined) netBalances[toUserId] -= paymentAmount;
     });
 
-    const debtors = [];
-    const creditors = [];
+    const debtors = [], creditors = [];
     Object.entries(netBalances).forEach(([userId, balance]) => {
       if (balance < -0.01) debtors.push({ userId, amount: -balance });
       if (balance > 0.01) creditors.push({ userId, amount: balance });
@@ -396,22 +313,27 @@ app.get('/api/dashboard-data', verifyToken, async (req, res) => {
 
     const youOwe = { total: 0, breakdown: [] };
     const youAreOwed = { total: 0, breakdown: [] };
-    groupSettlements.forEach(s => {
-      if (s.from === loggedInUserId) youOwe.breakdown.push({ to: s.toName, amount: s.amount });
-      if (s.to === loggedInUserId) youAreOwed.breakdown.push({ from: s.fromName, amount: s.amount });
+    finalDetailedDebts.forEach(s => {
+      if (s.from === loggedInUserId) {
+        youOwe.breakdown.push({ to: s.toName, amount: s.amount });
+      }
+      // === THIS BLOCK IS NOW CORRECTED ===
+      if (s.to === loggedInUserId) {
+        // The frontend expects a property called 'fromName', not 'from'
+        youAreOwed.breakdown.push({ fromName: s.fromName, amount: s.amount });
+      }
+      // === END OF CORRECTION ===
     });
     youOwe.total = youOwe.breakdown.reduce((sum, item) => sum + item.amount, 0);
     youAreOwed.total = youAreOwed.breakdown.reduce((sum, item) => sum + item.amount, 0);
 
     res.json({
-      users,
-      expenses, // This now contains the detailed split info
-      payments,
-      spendingSummary: spendingSummaryArray,
+      users, expenses, payments, spendingSummary: spendingSummaryArray,
       balances: {
         youOwe,
         youAreOwed,
         groupSettlements,
+        groupDebts: finalDetailedDebts
       }
     });
 
@@ -422,7 +344,6 @@ app.get('/api/dashboard-data', verifyToken, async (req, res) => {
 });
 
 
-// --- START SERVER ---
 app.listen(port, () => {
   console.log(`Server is running on http://localhost:${port}`);
 });
