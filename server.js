@@ -2,7 +2,6 @@ import express from 'express';
 import { google } from 'googleapis';
 import cors from 'cors';
 import { v4 as uuidv4 } from 'uuid';
-// --- CHANGE 1: Import formatInTimeZone instead of format ---
 import { formatInTimeZone } from 'date-fns-tz'; 
 import jwt from 'jsonwebtoken';
 import dotenv from 'dotenv';
@@ -10,7 +9,6 @@ import bcrypt from 'bcryptjs';
 
 dotenv.config();
 
-// --- DEFINE CONSTANTS AT THE TOP ---
 const app = express();
 const port = process.env.PORT || 3001;
 const SPREADSHEET_ID = process.env.SPREADSHEET_ID;
@@ -120,12 +118,10 @@ app.post('/api/expenses', verifyToken, isAdmin, async (req, res) => {
     const sheets = await getSheetsClient();
     const { description, amount, category, subCategory, location, locationFrom, locationTo, paidByUserId, splitType, splits } = req.body;
 
-    // --- FIX: Sanitize and validate the incoming amount ---
     const numericAmount = Number(String(amount).replace(/,/g, ''));
     if (isNaN(numericAmount) || numericAmount <= 0) {
         return res.status(400).json({ message: 'Expense amount must be a positive number.' });
     }
-    // --- END FIX ---
 
     const usersRes = await sheets.spreadsheets.values.get({ spreadsheetId: SPREADSHEET_ID, range: 'Users!A:D' });
     const payer = (usersRes.data.values || []).slice(1).find(r => r[0] === paidByUserId);
@@ -134,7 +130,6 @@ app.post('/api/expenses', verifyToken, isAdmin, async (req, res) => {
     const expenseId = uuidv4();
     
     const timestamp = formatInTimeZone(new Date(), 'Asia/Kolkata', 'yyyy-MM-dd HH:mm:ss');
-    // Use the sanitized numericAmount for the expense row
     const expenseRow = [expenseId, timestamp, description, category, subCategory, location, locationFrom, locationTo, numericAmount, paidByUserId, paidByUserName];
 
     await sheets.spreadsheets.values.append({ spreadsheetId: SPREADSHEET_ID, range: 'Expenses!A:K', valueInputOption: 'USER_ENTERED', resource: { values: [expenseRow] } });
@@ -144,7 +139,6 @@ app.post('/api/expenses', verifyToken, isAdmin, async (req, res) => {
       const numPeople = splits.length;
       if (numPeople === 0) throw new Error("Cannot split an expense among zero people.");
       
-      // Use the sanitized numericAmount for the calculation
       const totalAmountInPaise = Math.round(numericAmount * 100);
       const shareInPaise = Math.floor(totalAmountInPaise / numPeople);
       const remainderInPaise = totalAmountInPaise % numPeople;
@@ -160,7 +154,10 @@ app.post('/api/expenses', verifyToken, isAdmin, async (req, res) => {
     
     await sheets.spreadsheets.values.append({ spreadsheetId: SPREADSHEET_ID, range: 'Splits!A:D', valueInputOption: 'USER_ENTERED', resource: { values: splitRows } });
     res.status(201).json({ success: true });
-  } catch (error) { console.error("Error adding expense:", error); res.status(500).json({ message: 'Could not add expense.' }); }
+  } catch (error) { 
+      console.error("Error adding expense:", error); 
+      res.status(500).json({ message: 'Could not add expense.' }); 
+  }
 });
 
 app.post('/api/payments', verifyToken, async (req, res) => {
@@ -184,6 +181,11 @@ app.get('/api/dashboard-data', verifyToken, async (req, res) => {
   try {
     const sheets = await getSheetsClient();
     const loggedInUserId = req.user.userId;
+
+    // --- FIX STARTS HERE ---
+    // Helper function to safely parse floats that might have commas
+    const sanitizedParseFloat = (value) => parseFloat(String(value || '').replace(/,/g, '')) || 0;
+    // --- FIX ENDS HERE ---
 
     const batchGetResponse = await sheets.spreadsheets.values.batchGet({
       spreadsheetId: SPREADSHEET_ID,
@@ -213,7 +215,7 @@ app.get('/api/dashboard-data', verifyToken, async (req, res) => {
       const splitsForThisExpense = splitRows.filter(s => s[1] === exp[0]);
       splitsForThisExpense.forEach(split => {
         const owedById = split[2];
-        const shareAmount = parseFloat(split[3]) || 0;
+        const shareAmount = sanitizedParseFloat(split[3]); // Use safe parser
         if (payerId !== owedById) {
           detailedDebts[owedById][payerId] += shareAmount;
         }
@@ -223,7 +225,7 @@ app.get('/api/dashboard-data', verifyToken, async (req, res) => {
     paymentRows.forEach(p => {
       const fromUserId = p[2];
       const toUserId = p[3];
-      const paymentAmount = parseFloat(p[4]) || 0;
+      const paymentAmount = sanitizedParseFloat(p[4]); // Use safe parser
       detailedDebts[toUserId][fromUserId] += paymentAmount;
     });
 
@@ -246,16 +248,16 @@ app.get('/api/dashboard-data', verifyToken, async (req, res) => {
     const splitsByExpenseId = splitRows.reduce((acc, row) => {
         const expenseId = row[1];
         if (!acc[expenseId]) acc[expenseId] = [];
-        acc[expenseId].push({ userId: row[2], amount: parseFloat(row[3]) || 0 });
+        acc[expenseId].push({ userId: row[2], amount: sanitizedParseFloat(row[3]) }); // Use safe parser
         return acc;
     }, {});
 
     const expenses = expenseRows.map(row => {
-      const expenseId = row[0], totalAmount = parseFloat(row[8]) || 0;
+      const expenseId = row[0], totalAmount = sanitizedParseFloat(row[8]); // Use safe parser
       const splitsForThisExpense = splitsByExpenseId[expenseId] || [];
       const numPeople = splitsForThisExpense.length;
       let splitType = 'unknown';
-      if (numPeople > 0) {
+      if (numPeople > 0 && totalAmount > 0) {
         const expectedShare = totalAmount / numPeople;
         const isEvenSplit = splitsForThisExpense.every(s => Math.abs(s.amount - expectedShare) < 0.02);
         splitType = isEvenSplit ? 'even' : 'uneven';
@@ -278,7 +280,7 @@ app.get('/api/dashboard-data', verifyToken, async (req, res) => {
       date: row[1],
       paidByUserId: row[2],
       paidToUserId: row[3],
-      amount: parseFloat(row[4]) || 0,
+      amount: sanitizedParseFloat(row[4]), // Use safe parser
       note: row[5],
       paidByUserName: row[6],
       paidToUserName: row[7]
@@ -288,7 +290,7 @@ app.get('/api/dashboard-data', verifyToken, async (req, res) => {
     users.forEach(u => { spendingSummary[u.id] = { name: u.name, totalSpending: 0 }; });
     splitRows.forEach(split => {
       const owedByUserId = split[2];
-      const shareAmount = parseFloat(split[3]) || 0;
+      const shareAmount = sanitizedParseFloat(split[3]); // Use safe parser
       if (spendingSummary[owedByUserId]) spendingSummary[owedByUserId].totalSpending += shareAmount;
     });
     const spendingSummaryArray = Object.values(spendingSummary).sort((a, b) => b.totalSpending - a.totalSpending);
@@ -296,15 +298,15 @@ app.get('/api/dashboard-data', verifyToken, async (req, res) => {
     const netBalances = {};
     users.forEach(u => netBalances[u.id] = 0);
     expenseRows.forEach(exp => {
-      const amount = parseFloat(exp[8]) || 0, paidBy = exp[9];
+      const amount = sanitizedParseFloat(exp[8]), paidBy = exp[9]; // Use safe parser
       if (netBalances[paidBy] !== undefined) netBalances[paidBy] += amount;
     });
     splitRows.forEach(split => {
-      const owedBy = split[2], shareAmount = parseFloat(split[3]) || 0;
+      const owedBy = split[2], shareAmount = sanitizedParseFloat(split[3]); // Use safe parser
       if (netBalances[owedBy] !== undefined) netBalances[owedBy] -= shareAmount;
     });
     paymentRows.forEach(p => {
-      const fromUserId = p[2], toUserId = p[3], paymentAmount = parseFloat(p[4]) || 0;
+      const fromUserId = p[2], toUserId = p[3], paymentAmount = sanitizedParseFloat(p[4]); // Use safe parser
       if (netBalances[fromUserId] !== undefined) netBalances[fromUserId] += paymentAmount;
       if (netBalances[toUserId] !== undefined) netBalances[toUserId] -= paymentAmount;
     });
