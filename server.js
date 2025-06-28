@@ -119,24 +119,36 @@ app.post('/api/expenses', verifyToken, isAdmin, async (req, res) => {
   try {
     const sheets = await getSheetsClient();
     const { description, amount, category, subCategory, location, locationFrom, locationTo, paidByUserId, splitType, splits } = req.body;
+
+    // --- FIX: Sanitize and validate the incoming amount ---
+    const numericAmount = Number(String(amount).replace(/,/g, ''));
+    if (isNaN(numericAmount) || numericAmount <= 0) {
+        return res.status(400).json({ message: 'Expense amount must be a positive number.' });
+    }
+    // --- END FIX ---
+
     const usersRes = await sheets.spreadsheets.values.get({ spreadsheetId: SPREADSHEET_ID, range: 'Users!A:D' });
     const payer = (usersRes.data.values || []).slice(1).find(r => r[0] === paidByUserId);
     if (!payer) return res.status(404).json({ message: 'Payer not found.' });
     const paidByUserName = payer[2];
     const expenseId = uuidv4();
     
-    // --- CHANGE 2: Use formatInTimeZone to generate IST timestamp ---
     const timestamp = formatInTimeZone(new Date(), 'Asia/Kolkata', 'yyyy-MM-dd HH:mm:ss');
-    const expenseRow = [expenseId, timestamp, description, category, subCategory, location, locationFrom, locationTo, amount, paidByUserId, paidByUserName];
+    // Use the sanitized numericAmount for the expense row
+    const expenseRow = [expenseId, timestamp, description, category, subCategory, location, locationFrom, locationTo, numericAmount, paidByUserId, paidByUserName];
 
     await sheets.spreadsheets.values.append({ spreadsheetId: SPREADSHEET_ID, range: 'Expenses!A:K', valueInputOption: 'USER_ENTERED', resource: { values: [expenseRow] } });
+    
     let splitRows = [];
     if (splitType === 'equal') {
       const numPeople = splits.length;
       if (numPeople === 0) throw new Error("Cannot split an expense among zero people.");
-      const totalAmountInPaise = Math.round(amount * 100);
+      
+      // Use the sanitized numericAmount for the calculation
+      const totalAmountInPaise = Math.round(numericAmount * 100);
       const shareInPaise = Math.floor(totalAmountInPaise / numPeople);
       const remainderInPaise = totalAmountInPaise % numPeople;
+      
       splitRows = splits.map((userId, index) => {
         let userShareInPaise = shareInPaise;
         if (index < remainderInPaise) userShareInPaise += 1;
@@ -145,6 +157,7 @@ app.post('/api/expenses', verifyToken, isAdmin, async (req, res) => {
     } else if (splitType === 'exact') {
       splitRows = splits.map(split => [uuidv4(), expenseId, split.userId, split.amount]);
     } else { return res.status(400).json({ message: 'Invalid split type' }); }
+    
     await sheets.spreadsheets.values.append({ spreadsheetId: SPREADSHEET_ID, range: 'Splits!A:D', valueInputOption: 'USER_ENTERED', resource: { values: splitRows } });
     res.status(201).json({ success: true });
   } catch (error) { console.error("Error adding expense:", error); res.status(500).json({ message: 'Could not add expense.' }); }
@@ -159,7 +172,6 @@ app.post('/api/payments', verifyToken, async (req, res) => {
     if (!recipient) return res.status(404).json({ message: 'Recipient not found.' });
     const toUserName = recipient[2];
 
-    // --- CHANGE 3: Use formatInTimeZone to generate IST timestamp ---
     const timestamp = formatInTimeZone(new Date(), 'Asia/Kolkata', 'yyyy-MM-dd HH:mm:ss');
     const newRow = [uuidv4(), timestamp, fromUserId, toUserId, amount, note || '', req.user.name, toUserName];
 
