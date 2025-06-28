@@ -2,13 +2,11 @@ import express from 'express';
 import { google } from 'googleapis';
 import cors from 'cors';
 import { v4 as uuidv4 } from 'uuid';
-import { format } from 'date-fns';
-// import passport from 'passport'; // Not needed for manual login
-// import { Strategy as GoogleStrategy } from 'passport-google-oauth20'; // Not needed
+// --- CHANGE 1: Import formatInTimeZone instead of format ---
+import { formatInTimeZone } from 'date-fns-tz'; 
 import jwt from 'jsonwebtoken';
 import dotenv from 'dotenv';
-// import { OAuth2Client } from 'google-auth-library'; // Not needed
-import bcrypt from 'bcryptjs'; // <-- We will use this for password checking
+import bcrypt from 'bcryptjs';
 
 dotenv.config();
 
@@ -16,13 +14,9 @@ dotenv.config();
 const app = express();
 const port = process.env.PORT || 3001;
 const SPREADSHEET_ID = process.env.SPREADSHEET_ID;
-// const BASE_URL = process.env.BASE_URL; // Not needed for manual login
-// const FRONTEND_URL = process.env.FRONTEND_URL; // Not needed for manual login
-
 
 import credentials from '/etc/secrets/credentials.json' with { type: 'json' };  
 // import credentials from './credentials.json' with { type: 'json' };
-
 
 app.use(cors({
   allowedHeaders: ['Content-Type', 'Authorization']
@@ -130,7 +124,11 @@ app.post('/api/expenses', verifyToken, isAdmin, async (req, res) => {
     if (!payer) return res.status(404).json({ message: 'Payer not found.' });
     const paidByUserName = payer[2];
     const expenseId = uuidv4();
-    const expenseRow = [expenseId, format(new Date(), 'yyyy-MM-dd HH:mm:ss'), description, category, subCategory, location, locationFrom, locationTo, amount, paidByUserId, paidByUserName];
+    
+    // --- CHANGE 2: Use formatInTimeZone to generate IST timestamp ---
+    const timestamp = formatInTimeZone(new Date(), 'Asia/Kolkata', 'yyyy-MM-dd HH:mm:ss');
+    const expenseRow = [expenseId, timestamp, description, category, subCategory, location, locationFrom, locationTo, amount, paidByUserId, paidByUserName];
+
     await sheets.spreadsheets.values.append({ spreadsheetId: SPREADSHEET_ID, range: 'Expenses!A:K', valueInputOption: 'USER_ENTERED', resource: { values: [expenseRow] } });
     let splitRows = [];
     if (splitType === 'equal') {
@@ -160,7 +158,11 @@ app.post('/api/payments', verifyToken, async (req, res) => {
     const recipient = (usersRes.data.values || []).slice(1).find(r => r[0] === toUserId);
     if (!recipient) return res.status(404).json({ message: 'Recipient not found.' });
     const toUserName = recipient[2];
-    const newRow = [uuidv4(), format(new Date(), 'yyyy-MM-dd HH:mm:ss'), fromUserId, toUserId, amount, note || '', req.user.name, toUserName];
+
+    // --- CHANGE 3: Use formatInTimeZone to generate IST timestamp ---
+    const timestamp = formatInTimeZone(new Date(), 'Asia/Kolkata', 'yyyy-MM-dd HH:mm:ss');
+    const newRow = [uuidv4(), timestamp, fromUserId, toUserId, amount, note || '', req.user.name, toUserName];
+
     await sheets.spreadsheets.values.append({ spreadsheetId: SPREADSHEET_ID, range: 'Payments!A:H', valueInputOption: 'USER_ENTERED', resource: { values: [newRow] } });
     res.status(201).json({ success: true });
   } catch (error) { console.error("Error adding payment:", error); res.status(500).json({ message: 'Could not save payment.' }); }
@@ -319,12 +321,9 @@ app.get('/api/dashboard-data', verifyToken, async (req, res) => {
       if (s.from === loggedInUserId) {
         youOwe.breakdown.push({ to: s.toName, amount: s.amount });
       }
-      // === THIS BLOCK IS NOW CORRECTED ===
       if (s.to === loggedInUserId) {
-        // The frontend expects a property called 'fromName', not 'from'
         youAreOwed.breakdown.push({ fromName: s.fromName, amount: s.amount });
       }
-      // === END OF CORRECTION ===
     });
     youOwe.total = youOwe.breakdown.reduce((sum, item) => sum + item.amount, 0);
     youAreOwed.total = youAreOwed.breakdown.reduce((sum, item) => sum + item.amount, 0);
@@ -344,7 +343,6 @@ app.get('/api/dashboard-data', verifyToken, async (req, res) => {
     res.status(500).json({ message: 'Could not fetch dashboard data.' });
   }
 });
-
 
 app.listen(port, () => {
   console.log(`Server is running on http://localhost:${port}`);
