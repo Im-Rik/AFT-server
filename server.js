@@ -13,8 +13,8 @@ const app = express();
 const port = process.env.PORT || 3001;
 const SPREADSHEET_ID = process.env.SPREADSHEET_ID;
 
-import credentials from '/etc/secrets/credentials.json' with { type: 'json' };  
-// import credentials from './credentials.json' with { type: 'json' };
+// import credentials from '/etc/secrets/credentials.json' with { type: 'json' };  
+import credentials from './credentials.json' with { type: 'json' };
 
 app.use(cors({
   allowedHeaders: ['Content-Type', 'Authorization']
@@ -182,10 +182,7 @@ app.get('/api/dashboard-data', verifyToken, async (req, res) => {
     const sheets = await getSheetsClient();
     const loggedInUserId = req.user.userId;
 
-    // --- FIX STARTS HERE ---
-    // Helper function to safely parse floats that might have commas
     const sanitizedParseFloat = (value) => parseFloat(String(value || '').replace(/,/g, '')) || 0;
-    // --- FIX ENDS HERE ---
 
     const batchGetResponse = await sheets.spreadsheets.values.batchGet({
       spreadsheetId: SPREADSHEET_ID,
@@ -202,6 +199,51 @@ app.get('/api/dashboard-data', verifyToken, async (req, res) => {
     const users = userRows.map(r => ({ id: r[0], name: r[2] })).filter(u => u.id && u.name);
     const userMap = users.reduce((acc, user) => ({ ...acc, [user.id]: user.name }), {});
 
+    const personToPersonPayments = paymentRows.map(row => ({
+      id: row[0],
+      date: row[1],
+      paidByUserId: row[2],
+      paidToUserId: row[3],
+      amount: sanitizedParseFloat(row[4]),
+      note: row[5],
+      paidByUserName: row[6],
+      paidToUserName: row[7]
+    }));
+
+    // --- START: MODIFIED LOGIC FOR EXPENSE NOTE ---
+    const expenseAsPayments = expenseRows.map(row => {
+      const category = row[3];
+      let locationText = '';
+
+      // Handle the 'Transport' category edge case
+      if (category === 'Transport') {
+        const from = row[6] || '';
+        const to = row[7] || '';
+        if (from && to) {
+          locationText = `${from} → ${to}`;
+        }
+      } else {
+        const location = row[5] || '';
+        if (location) {
+          locationText = `Location: ${location}`;
+        }
+      }
+      
+      return {
+        id: row[0],
+        date: row[1],
+        paidByUserId: row[9],
+        paidToUserId: null,
+        amount: sanitizedParseFloat(row[8]),
+        note: locationText, // Use the new location text as the note
+        paidByUserName: row[10],
+        paidToUserName: row[2],
+      };
+    });
+    // --- END: MODIFIED LOGIC FOR EXPENSE NOTE ---
+
+    const combinedPayments = [...personToPersonPayments, ...expenseAsPayments];
+    
     const detailedDebts = {};
     users.forEach(u1 => {
       detailedDebts[u1.id] = {};
@@ -215,7 +257,7 @@ app.get('/api/dashboard-data', verifyToken, async (req, res) => {
       const splitsForThisExpense = splitRows.filter(s => s[1] === exp[0]);
       splitsForThisExpense.forEach(split => {
         const owedById = split[2];
-        const shareAmount = sanitizedParseFloat(split[3]); // Use safe parser
+        const shareAmount = sanitizedParseFloat(split[3]);
         if (payerId !== owedById) {
           detailedDebts[owedById][payerId] += shareAmount;
         }
@@ -225,8 +267,10 @@ app.get('/api/dashboard-data', verifyToken, async (req, res) => {
     paymentRows.forEach(p => {
       const fromUserId = p[2];
       const toUserId = p[3];
-      const paymentAmount = sanitizedParseFloat(p[4]); // Use safe parser
-      detailedDebts[toUserId][fromUserId] += paymentAmount;
+      const paymentAmount = sanitizedParseFloat(p[4]);
+      if (detailedDebts[fromUserId] && detailedDebts[fromUserId][toUserId] !== undefined) {
+          detailedDebts[fromUserId][toUserId] -= paymentAmount;
+      }
     });
 
     const finalDetailedDebts = [];
@@ -248,12 +292,12 @@ app.get('/api/dashboard-data', verifyToken, async (req, res) => {
     const splitsByExpenseId = splitRows.reduce((acc, row) => {
         const expenseId = row[1];
         if (!acc[expenseId]) acc[expenseId] = [];
-        acc[expenseId].push({ userId: row[2], amount: sanitizedParseFloat(row[3]) }); // Use safe parser
+        acc[expenseId].push({ userId: row[2], amount: sanitizedParseFloat(row[3]) });
         return acc;
     }, {});
 
     const expenses = expenseRows.map(row => {
-      const expenseId = row[0], totalAmount = sanitizedParseFloat(row[8]); // Use safe parser
+      const expenseId = row[0], totalAmount = sanitizedParseFloat(row[8]);
       const splitsForThisExpense = splitsByExpenseId[expenseId] || [];
       const numPeople = splitsForThisExpense.length;
       let splitType = 'unknown';
@@ -275,22 +319,11 @@ app.get('/api/dashboard-data', verifyToken, async (req, res) => {
       };
     });
 
-    const payments = paymentRows.map(row => ({
-      id: row[0],
-      date: row[1],
-      paidByUserId: row[2],
-      paidToUserId: row[3],
-      amount: sanitizedParseFloat(row[4]), // Use safe parser
-      note: row[5],
-      paidByUserName: row[6],
-      paidToUserName: row[7]
-    }));
-
     const spendingSummary = {};
     users.forEach(u => { spendingSummary[u.id] = { name: u.name, totalSpending: 0 }; });
     splitRows.forEach(split => {
       const owedByUserId = split[2];
-      const shareAmount = sanitizedParseFloat(split[3]); // Use safe parser
+      const shareAmount = sanitizedParseFloat(split[3]);
       if (spendingSummary[owedByUserId]) spendingSummary[owedByUserId].totalSpending += shareAmount;
     });
     const spendingSummaryArray = Object.values(spendingSummary).sort((a, b) => b.totalSpending - a.totalSpending);
@@ -298,17 +331,17 @@ app.get('/api/dashboard-data', verifyToken, async (req, res) => {
     const netBalances = {};
     users.forEach(u => netBalances[u.id] = 0);
     expenseRows.forEach(exp => {
-      const amount = sanitizedParseFloat(exp[8]), paidBy = exp[9]; // Use safe parser
+      const amount = sanitizedParseFloat(exp[8]), paidBy = exp[9];
       if (netBalances[paidBy] !== undefined) netBalances[paidBy] += amount;
     });
     splitRows.forEach(split => {
-      const owedBy = split[2], shareAmount = sanitizedParseFloat(split[3]); // Use safe parser
+      const owedBy = split[2], shareAmount = sanitizedParseFloat(split[3]);
       if (netBalances[owedBy] !== undefined) netBalances[owedBy] -= shareAmount;
     });
     paymentRows.forEach(p => {
-      const fromUserId = p[2], toUserId = p[3], paymentAmount = sanitizedParseFloat(p[4]); // Use safe parser
-      if (netBalances[fromUserId] !== undefined) netBalances[fromUserId] += paymentAmount;
-      if (netBalances[toUserId] !== undefined) netBalances[toUserId] -= paymentAmount;
+      const fromUserId = p[2], toUserId = p[3], paymentAmount = sanitizedParseFloat(p[4]);
+      if (netBalances[fromUserId] !== undefined) netBalances[fromUserId] -= paymentAmount;
+      if (netBalances[toUserId] !== undefined) netBalances[toUserId] += paymentAmount;
     });
 
     const debtors = [], creditors = [];
@@ -343,7 +376,10 @@ app.get('/api/dashboard-data', verifyToken, async (req, res) => {
     youAreOwed.total = youAreOwed.breakdown.reduce((sum, item) => sum + item.amount, 0);
 
     res.json({
-      users, expenses, payments, spendingSummary: spendingSummaryArray,
+      users, 
+      expenses, 
+      payments: combinedPayments,
+      spendingSummary: spendingSummaryArray,
       balances: {
         youOwe,
         youAreOwed,
