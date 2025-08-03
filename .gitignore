@@ -7,3 +7,6 @@ credentials.json
 
 # Production
 /build
+/generated/prisma
+
+/updates.txt

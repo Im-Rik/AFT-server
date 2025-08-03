@@ -1,205 +1,9 @@
-import express from 'express';
-import cors from 'cors';
-import { createClient } from '@supabase/supabase-js';
-import { formatInTimeZone } from 'date-fns-tz';
-import jwt from 'jsonwebtoken';
-import dotenv from 'dotenv';
-import bcrypt from 'bcryptjs';
+import { supabase } from '../config/supabaseClient.js';
 
-dotenv.config();
-
-const app = express();
-const port = process.env.PORT || 3001;
-
-// --- Supabase Setup ---
-const supabaseUrl = process.env.SUPABASE_URL;
-const supabaseKey = process.env.SUPABASE_ANON_KEY;
-const supabase = createClient(supabaseUrl, supabaseKey);
-
-app.use(cors({
-  allowedHeaders: ['Content-Type', 'Authorization']
-}));
-app.use(express.json());
-
-// --- Middleware ---
-const verifyToken = (req, res, next) => {
-  const authHeader = req.headers['authorization'];
-  const token = authHeader && authHeader.split(' ')[1];
-  if (token == null) return res.sendStatus(401);
-
-  jwt.verify(token, process.env.JWT_SECRET, (err, user) => {
-    if (err) return res.sendStatus(403);
-    req.user = user;
-    next();
-  });
-};
-
-const isAdmin = (req, res, next) => {
-  if (req.user.role !== 'admin') {
-    return res.status(403).json({ message: 'Forbidden: Admins only.' });
-  }
-  next();
-};
-
-// --- Routes ---
-
-app.post('/auth/manual-login', async (req, res) => {
-  try {
-    const { username, password } = req.body;
-    if (!username || !password) {
-      return res.status(400).json({ message: 'Username and password are required.' });
-    }
-
-    // Find user by email (assuming username is the email)
-    const { data: user, error } = await supabase
-      .from('users')
-      .select('id, email, name, role, hashed_password')
-      .ilike('email', username) // Case-insensitive search
-      .single();
-
-    if (error || !user) {
-      return res.status(401).json({ message: 'Invalid username or password.' });
-    }
-
-    if (!user.hashed_password) {
-      console.error(`User ${user.email} does not have a password set.`);
-      return res.status(401).json({ message: 'Invalid username or password.' });
-    }
-
-    const isMatch = await bcrypt.compare(password, user.hashed_password);
-
-    if (!isMatch) {
-      return res.status(401).json({ message: 'Invalid username or password.' });
-    }
-
-    const payload = { userId: user.id, email: user.email, name: user.name, role: user.role };
-    const token = jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: '30d' });
-
-    res.status(200).json({ token });
-
-  } catch (error) {
-    console.error('Login error:', error);
-    res.status(500).json({ message: 'An error occurred during login.' });
-  }
-});
-
-app.get('/', (req, res) => {
-  res.status(200).send('Server is live and running!');
-});
-
-app.get('/api/profile', verifyToken, (req, res) => res.json({ user: req.user }));
-
-app.get('/api/users', verifyToken, async (req, res) => {
-  try {
-    const { data, error } = await supabase
-        .from('users')
-        .select('id, name, role');
-    if (error) throw error;
-    res.json(data);
-  } catch (error) {
-    console.error("ERROR FETCHING USERS:", error);
-    res.status(500).json({ message: 'Could not fetch users.' });
-  }
-});
-
-app.post('/api/expenses', verifyToken, isAdmin, async (req, res) => {
-  try {
-    const { description, amount, category, subCategory, location, locationFrom, locationTo, paidByUserId, splitType, splits } = req.body;
-    
-    const numericAmount = Number(String(amount).replace(/,/g, ''));
-    if (isNaN(numericAmount) || numericAmount <= 0) {
-      return res.status(400).json({ message: 'Expense amount must be a positive number.' });
-    }
-
-    // Insert the expense
-    const { data: expenseData, error: expenseError } = await supabase
-      .from('expenses')
-      .insert({
-        description,
-        amount: numericAmount,
-        category,
-        sub_category: subCategory,
-        location,
-        location_from: locationFrom,
-        location_to: locationTo,
-        paid_by_user_id: paidByUserId,
-        created_at: formatInTimeZone(new Date(), 'Asia/Kolkata', 'yyyy-MM-dd HH:mm:ssXXX')
-      })
-      .select()
-      .single();
-
-    if (expenseError) throw expenseError;
-    const expenseId = expenseData.id;
-
-    // Prepare split data
-    let splitRows = [];
-    if (splitType === 'equal') {
-      const numPeople = splits.length;
-      if (numPeople === 0) throw new Error("Cannot split an expense among zero people.");
-      
-      const totalAmountInCents = Math.round(numericAmount * 100);
-      const shareInCents = Math.floor(totalAmountInCents / numPeople);
-      const remainderInCents = totalAmountInCents % numPeople;
-      
-      splitRows = splits.map((userId, index) => {
-        let userShareInCents = shareInCents;
-        if (index < remainderInCents) userShareInCents += 1;
-        return {
-          expense_id: expenseId,
-          owed_by_user_id: userId,
-          share_amount: (userShareInCents / 100).toFixed(2)
-        };
-      });
-    } else if (splitType === 'exact') {
-      splitRows = splits.map(split => ({
-        expense_id: expenseId,
-        owed_by_user_id: split.userId,
-        share_amount: split.amount
-      }));
-    } else {
-      return res.status(400).json({ message: 'Invalid split type' });
-    }
-
-    // Insert splits
-    const { error: splitsError } = await supabase.from('splits').insert(splitRows);
-    if (splitsError) throw splitsError;
-
-    res.status(201).json({ success: true, expenseId });
-
-  } catch (error) { 
-    console.error("Error adding expense:", error); 
-    res.status(500).json({ message: 'Could not add expense.' }); 
-  }
-});
-
-app.post('/api/payments', verifyToken, async (req, res) => {
-  try {
-    const { fromUserId, toUserId, amount, note } = req.body;
-
-    const { error } = await supabase
-      .from('payments')
-      .insert({
-        paid_by_user_id: fromUserId,
-        paid_to_user_id: toUserId,
-        amount,
-        note,
-        created_at: formatInTimeZone(new Date(), 'Asia/Kolkata', 'yyyy-MM-dd HH:mm:ssXXX')
-      });
-    
-    if (error) throw error;
-    res.status(201).json({ success: true });
-
-  } catch (error) {
-    console.error("Error adding payment:", error);
-    res.status(500).json({ message: 'Could not save payment.' });
-  }
-});
-
-app.get('/api/dashboard-data', verifyToken, async (req, res) => {
+export const getDashboardData = async (req, res) => {
   try {
     const loggedInUserId = req.user.userId;
 
-    // Fetch all required data in parallel
     const [
       { data: users, error: usersError },
       { data: expensesData, error: expensesError },
@@ -243,11 +47,11 @@ app.get('/api/dashboard-data', verifyToken, async (req, res) => {
         id: row.id,
         date: row.created_at,
         paidByUserId: row.paid_by_user_id,
-        paidToUserId: null, // This is an expense, not a direct payment to a user
+        paidToUserId: null,
         amount: parseFloat(row.amount),
         note: locationText, 
         paidByUserName: row.paid_by_user.name,
-        paidToUserName: row.description, // Use description as placeholder
+        paidToUserName: row.description,
       };
     });
 
@@ -285,7 +89,7 @@ app.get('/api/dashboard-data', verifyToken, async (req, res) => {
     const finalDetailedDebts = [];
     users.forEach(u1 => {
         users.forEach(u2 => {
-            if (u1.id < u2.id) { // Avoid duplicate pairs (A-B and B-A)
+            if (u1.id < u2.id) {
                 const debt1to2 = detailedDebts[u1.id][u2.id] || 0;
                 const debt2to1 = detailedDebts[u2.id][u1.id] || 0;
                 const netDebt = debt1to2 - debt2to1;
@@ -396,21 +200,14 @@ app.get('/api/dashboard-data', verifyToken, async (req, res) => {
       }
     });
 
-   } catch (error) {
-    // Log more detailed error information to the terminal
+  } catch (error) {
     console.error('--- DETAILED DASHBOARD ERROR ---');
     console.error('Message:', error.message);
     console.error('Stack:', error.stack);
     console.error('--------------------------------');
-
-    // Send a more specific error message to the frontend
     res.status(500).json({ 
         message: 'Could not fetch dashboard data.',
         error: error.message 
     });
   }
-});
-
-app.listen(port, () => {
-  console.log(`Server is running on http://localhost:${port}`);
-});
+};
