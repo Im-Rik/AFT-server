@@ -1,15 +1,8 @@
-// Initializes and exports the Supabase client
-
 import { createClient } from '@supabase/supabase-js';
-import dotenv from 'dotenv';
+import { config } from './config.js';
 
-dotenv.config();
-
-const supabaseUrl = process.env.SUPABASE_URL;
-const supabaseKey = process.env.SUPABASE_ANON_KEY;
-
-if (!supabaseUrl || !supabaseKey) {
-  throw new Error("Supabase URL or Anon Key is missing from .env file");
+if (!config.supabaseUrl || !config.supabaseAnonKey) {
+  throw new Error("Supabase URL or Anon Key is missing from environment variables");
 }
 
-export const supabase = createClient(supabaseUrl, supabaseKey);
+export const supabase = createClient(config.supabaseUrl, config.supabaseAnonKey);
