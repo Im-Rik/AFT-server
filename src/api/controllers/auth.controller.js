@@ -21,16 +21,36 @@ const loginUser = asyncHandler(async (req, res) => {
   const cookieOptions = {
     httpOnly: true,
     secure: config.nodeEnv === 'production',
-    sameSite: 'strict',
+    sameSite: 'lax',
     maxAge: 24 * 60 * 60 * 1000
   };
 
-  res
-    .status(200)
-    .cookie('accessToken', token, cookieOptions)
-    .json(
-      new ApiResponse(200, { user, token }, 'Signed in successfully.')
-    );
+  const isMobileClient = req.headers['x-client-type'] === 'mobile';
+
+  if (isMobileClient){
+    const responsePayload = {user, token};
+    return res
+      .status(200)
+      .json(
+        new ApiResponse(200, responsePayload, 'Signed in successfully.')
+      );
+  } else {
+    const responsePayload = {user, token};
+    return res
+      .status(200)
+      .cookie('accessToken', token, cookieOptions)
+      .json(
+        new ApiResponse(200, responsePayload, 'Signed in successfully.')
+      );
+  }
+
 });
 
-export { signup, loginUser };
+const logoutUser = asyncHandler(async (req, res) => {
+  res
+    .status(200)
+    .clearCookie('accessToken')
+    .json(new ApiResponse(200, {}, "User logged out successfully."));
+});
+
+export { signup, loginUser, logoutUser };
