@@ -1,6 +1,7 @@
 import Joi from 'joi';
 
-export const addExpenseSchema = Joi.object({
+// Define the common fields that are always required.
+const commonExpenseFields = {
     description: Joi.string().required(),
     amount: Joi.number().positive().required(),
     category: Joi.string().required(),
@@ -9,15 +10,29 @@ export const addExpenseSchema = Joi.object({
     locationFrom: Joi.string().allow('').optional(),
     locationTo: Joi.string().allow('').optional(),
     paidByUserId: Joi.string().uuid().required(),
-    splitType: Joi.string().valid('equal', 'exact').required(),
-    splits: Joi.array().min(1).required().items(
-        Joi.when('splitType', {
-            is: 'equal',
-            then: Joi.string().uuid().required(),
-            otherwise: Joi.object({
-                userId: Joi.string().uuid().required(),
-                amount: Joi.number().positive().required()
-            })
-        })
-    )
+};
+
+// Define the schema for an "equal" split.
+const equalSplitSchema = Joi.object({
+    ...commonExpenseFields,
+    splitType: Joi.string().valid('equal').required(),
+    splits: Joi.array().items(Joi.string().uuid()).min(1).required(),
 });
+
+// Define the schema for an "exact" split.
+const exactSplitSchema = Joi.object({
+    ...commonExpenseFields,
+    splitType: Joi.string().valid('exact').required(),
+    splits: Joi.array().items(
+        Joi.object({
+            userId: Joi.string().uuid().required(),
+            amount: Joi.number().positive().required()
+        })
+    ).min(1).required(),
+});
+
+// The final schema accepts EITHER the equal or the exact structure.
+export const addExpenseSchema = Joi.alternatives().try(
+    equalSplitSchema,
+    exactSplitSchema
+);

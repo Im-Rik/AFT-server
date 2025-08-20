@@ -10,7 +10,6 @@ import {
 } from '../utils/dashboardCalculations.js';
 
 const getForTrip = async (tripId) => {
-    // 1. Fetch participants first
     const { data: participantsData, error: participantsError } = await supabase
       .from('trip_participants')
       .select('role, user:users(id, name, username, email)')
@@ -30,7 +29,6 @@ const getForTrip = async (tripId) => {
     const users = participantsData.map(p => p.user);
     const userMap = users.reduce((acc, user) => ({ ...acc, [user.id]: user.name }), {});
 
-    // 2. Fetch all transactions with improved error handling
     const [expensesResult, settlementsResult] = await Promise.all([
         supabase.from('expenses').select('*, paid_by_user:users!paid_by_user_id(name)').eq('trip_id', tripId),
         supabase.from('settlements').select('*, from_user:users!from_user_id(name), to_user:users!to_user_id(name)').eq('trip_id', tripId)
@@ -50,7 +48,6 @@ const getForTrip = async (tripId) => {
         splitsData = data || [];
     }
 
-    // 3. Perform calculations using helper functions
     let detailedDebts = calculateDetailedDebts(expensesData, splitsData, users);
     detailedDebts = applySettlementsToDebts(detailedDebts, settlementsData);
     
@@ -75,7 +72,6 @@ const getForTrip = async (tripId) => {
         return { total, breakdown };
     };
     
-    // 4. Assemble and return the final data structure
     return {
       participants: participantsData,
       spendingSummary: spendingSummaryArray,

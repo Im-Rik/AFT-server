@@ -24,7 +24,7 @@ const add = async (tripId, expenseDetails) => {
     }
 
     const { data: expenseData, error: expenseError } = await supabase
-      .from('expense')
+      .from('expenses')
       .insert({
         trip_id: tripId,
         description,
