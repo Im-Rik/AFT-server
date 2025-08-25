@@ -14,6 +14,6 @@ export const generateTokenForUser = (user) => {
   };
 
   return jwt.sign(tokenPayload, config.jwtSecret, {
-    expiresIn: '1d',
+    expiresIn: '90d',
   });
 };

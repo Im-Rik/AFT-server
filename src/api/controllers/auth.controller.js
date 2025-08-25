@@ -22,7 +22,7 @@ const loginUser = asyncHandler(async (req, res) => {
     httpOnly: true,
     secure: config.nodeEnv === 'production',
     sameSite: 'lax',
-    maxAge: 24 * 60 * 60 * 1000
+    maxAge: 24 * 60 * 60 * 1000 * 90 //90 days
   };
 
   const isMobileClient = req.headers['x-client-type'] === 'mobile';
