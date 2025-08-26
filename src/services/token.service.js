@@ -17,3 +17,15 @@ export const generateTokenForUser = (user) => {
     expiresIn: '90d',
   });
 };
+
+export const generateSignupToken = (payload) => {
+  return jwt.sign(payload, config.jwtSecret, { expiresIn: '10m' });
+};
+
+export const generateRegistrationToken = (payload) => {
+  return jwt.sign(
+    { ...payload, type: 'registration' },
+    config.jwtSecret,
+    { expiresIn: '15m' }
+  );
+};

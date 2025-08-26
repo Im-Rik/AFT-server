@@ -13,7 +13,6 @@ export const verifyJWT = asyncHandler(async (req, res, next) => {
 
   try {
     const decodedPayload = jwt.verify(token, config.jwtSecret);
-
     const { data: user, error } = await supabase
       .from('users')
       .select('id, name, email, username')
@@ -26,13 +25,39 @@ export const verifyJWT = asyncHandler(async (req, res, next) => {
 
     req.user = user;
     next();
-
   } catch (err) {
-    if (err instanceof jwt.TokenExpiredError) {
-      throw new ApiError(401, 'Unauthorized: Token has expired.');
-    }
     if (err instanceof jwt.JsonWebTokenError) {
       throw new ApiError(401, 'Unauthorized: Invalid token.');
+    }
+    throw err;
+  }
+});
+
+// Middleware to verify the temporary token used for registration
+export const verifyRegistrationToken = asyncHandler(async (req, res, next) => {
+  const token = req.headers['authorization']?.replace('Bearer ', '');
+
+  if (!token) {
+    throw new ApiError(401, 'Unauthorized: Registration token is required.');
+  }
+
+  try {
+    const decodedPayload = jwt.verify(token, config.jwtSecret);
+
+    if (!decodedPayload.email || decodedPayload.type !== 'registration') {
+      throw new ApiError(401, 'Unauthorized: Invalid registration token.');
+    }
+
+    // Attach the verified user details for the final registration step
+    req.signupDetails = {
+      name: decodedPayload.name,
+      email: decodedPayload.email,
+      hashedPassword: decodedPayload.hashedPassword,
+    };
+    next();
+  } catch (err) {
+    if (err instanceof jwt.JsonWebTokenError) {
+      throw new ApiError(401, 'Unauthorized: Invalid registration token.');
     }
     throw err;
   }
