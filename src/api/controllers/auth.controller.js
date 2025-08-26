@@ -80,11 +80,31 @@ const logoutUser = asyncHandler(async (req, res) => {
   res.status(200).clearCookie('accessToken').json(new ApiResponse(200, {}, "User logged out successfully."));
 });
 
+const forgotPassword = asyncHandler(async (req, res) => {
+  const { email } = req.body;
+  await authService.handleForgotPassword(email);
+
+  res.status(200).json(
+    new ApiResponse(200, null, 'If an account with that email exists, a password reset link has been sent.')
+  );
+});
+
+const resetPassword = asyncHandler(async (req, res) => {
+  const { token, password } = req.body;
+  await authService.resetPassword(token, password);
+
+  res.status(200).json(
+    new ApiResponse(200, null, 'Password has been reset successfully.')
+  );
+});
+
 export {
     registerStepOne,
     verifyOtp,
     checkUsernameAvailability,
     registerStepTwo,
     loginUser,
-    logoutUser
+    logoutUser,
+    forgotPassword,
+    resetPassword,
 };

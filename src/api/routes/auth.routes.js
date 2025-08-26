@@ -5,7 +5,9 @@ import {
     checkUsernameAvailability,
     registerStepTwo,
     loginUser,
-    logoutUser
+    logoutUser,
+    forgotPassword,
+    resetPassword,
 } from '../controllers/auth.controller.js';
 import { validate } from '../middlewares/validate.middleware.js';
 import {
@@ -13,7 +15,9 @@ import {
     verifyOtpSchema,
     checkUsernameSchema,
     registerStepTwoSchema,
-    loginSchema
+    loginSchema,
+    forgotPasswordSchema,
+    resetPasswordSchema,
 } from '../validation/auth.validation.js';
 import { verifyJWT, verifyRegistrationToken } from '../middlewares/auth.middleware.js';
 
@@ -28,5 +32,9 @@ router.post('/register-step-two', verifyRegistrationToken, validate(registerStep
 // --- STANDARD AUTH ROUTES ---
 router.post('/login', validate(loginSchema), loginUser);
 router.post('/logout', verifyJWT, logoutUser);
+
+// --- PASSWORD RESET ROUTES ---
+router.post('/forgot-password', validate(forgotPasswordSchema), forgotPassword);
+router.post('/reset-password', validate(resetPasswordSchema), resetPassword);
 
 export default router;

@@ -13,7 +13,7 @@ const transporter = nodemailer.createTransport({
 
 export const sendOtpEmail = async (to, otp) => {
   const mailOptions = {
-    from: `"AFT" <${config.email.from}>`,
+    from: `"AFT Verification" <${config.email.from}>`,
     to: to,
     subject: 'Your Verification Code',
     html: `
@@ -34,5 +34,37 @@ export const sendOtpEmail = async (to, otp) => {
   } catch (error) {
     console.error('Error sending OTP email:', error);
     throw new Error('Could not send verification email.');
+  }
+};
+
+
+export const sendPasswordResetEmail = async (to, token) => {
+  const resetLink = `${config.frontendUrl}/reset-password?token=${token}`;
+
+  const mailOptions = {
+    from: `"AFT Reset" <${config.email.from}>`,
+    to: to,
+    subject: 'Your Password Reset Request',
+    html: `
+      <div style="font-family: Arial, sans-serif; color: #333;">
+        <h2>Password Reset</h2>
+        <p>You requested a password reset. Click the link below to set a new password:</p>
+        <p>
+          <a href="${resetLink}" style="background-color: #0d9488; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px;">
+            Reset Your Password
+          </a>
+        </p>
+        <p>This link will expire in 15 minutes.</p>
+        <p>If you did not request a password reset, you can safely ignore this email.</p>
+      </div>
+    `,
+  };
+
+  try {
+    await transporter.sendMail(mailOptions);
+    console.log(`Password reset email sent to: ${to}`);
+  } catch (error) {
+    console.error('Error sending password reset email:', error);
+    throw new Error('Could not send password reset email.');
   }
 };

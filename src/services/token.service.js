@@ -29,3 +29,11 @@ export const generateRegistrationToken = (payload) => {
     { expiresIn: '15m' }
   );
 };
+
+export const generatePasswordResetToken = (user) => {
+  return jwt.sign(
+    { id: user.id, type: 'password-reset' },
+    config.jwtSecret,
+    { expiresIn: '15m' } // Token is valid for 15 minutes
+  );
+};

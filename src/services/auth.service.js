@@ -3,8 +3,8 @@ import jwt from 'jsonwebtoken';
 import { supabase } from '../config/supabaseClient.js';
 import { ApiError } from '../utils/ApiError.js';
 import { generateOtp, hashOtp, compareOtp } from '../utils/otp.js';
-import { sendOtpEmail } from './email.service.js';
-import { generateSignupToken } from './token.service.js';
+import { sendOtpEmail, sendPasswordResetEmail } from './email.service.js';
+import { generateSignupToken, generatePasswordResetToken  } from './token.service.js';
 import { config } from '../config/config.js';
 
 const initiateSignup = async (name, email, password) => {
@@ -68,6 +68,44 @@ const loginUserByCredentials = async (identifier, password) => {
   return userWithoutPassword;
 };
 
+const handleForgotPassword = async (email) => {
+  const { data: user } = await supabase.from('users').select('id, email').eq('email', email).single();
+
+  // IMPORTANT: Do not throw an error if user is not found.
+  // This prevents attackers from guessing which emails are registered.
+  if (user) {
+    const resetToken = generatePasswordResetToken(user);
+    await sendPasswordResetEmail(user.email, resetToken);
+  }
+  // Always return success to the controller.
+};
+
+const resetPassword = async (token, newPassword) => {
+  try {
+    const decoded = jwt.verify(token, config.jwtSecret);
+
+    if (decoded.type !== 'password-reset') {
+      throw new ApiError(401, 'Invalid token type.');
+    }
+
+    const salt = await bcrypt.genSalt(10);
+    const hashedPassword = await bcrypt.hash(newPassword, salt);
+
+    const { error } = await supabase
+      .from('users')
+      .update({ hashed_password: hashedPassword })
+      .eq('id', decoded.id);
+      
+    if (error) throw new ApiError(500, 'Could not update password.');
+
+  } catch (err) {
+    if (err instanceof jwt.JsonWebTokenError) {
+      throw new ApiError(401, 'Invalid or expired password reset token.');
+    }
+    throw err;
+  }
+};
+
 export const authService = {
-  initiateSignup, verifySignupOtp, isUsernameAvailable, completeSignup, loginUserByCredentials
+  initiateSignup, verifySignupOtp, isUsernameAvailable, completeSignup, loginUserByCredentials, handleForgotPassword, resetPassword
 };
