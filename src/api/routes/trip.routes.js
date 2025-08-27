@@ -5,7 +5,8 @@ import {
     getTripParticipants,
     addTripParticipants,
     updateParticipantRole,
-    removeParticipant
+    removeParticipant,
+    joinTrip
 } from '../controllers/trip.controller.js';
 import { verifyJWT } from '../middlewares/auth.middleware.js';
 import { isTripAdmin, isTripMember } from '../middlewares/trip.middleware.js';
@@ -27,6 +28,9 @@ router.use(verifyJWT);
 router.route('/')
     .post(validate(createTripSchema), createTrip)
     .get(getAllUserTrips);
+
+router.route('/:tripId/join')
+    .post(joinTrip);
 
 router.use('/:tripId/expenses', isTripMember, expenseRouter);
 router.use('/:tripId/settlements', isTripMember, settlementRouter);

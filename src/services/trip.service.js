@@ -136,6 +136,37 @@ const removeParticipant = async (tripId, participantId, adminUserId) => {
     return { message: 'Participant removed successfully from the trip.' };
 }
 
+const joinTrip = async (userId, tripId) => {
+  const { data: tripExists, error: tripError } = await supabase
+    .from('trips')
+    .select('id')
+    .eq('id', tripId)
+    .single();
+
+  if (tripError || !tripExists) {
+    throw new ApiError(404, 'Trip not found with the provided ID.');
+  }
+
+  const { data, error } = await supabase
+    .from('trip_participants')
+    .insert({
+      trip_id: tripId,
+      user_id: userId,
+      role: 'member'
+    })
+    .select('trip:trips(*)')
+    .single();
+    
+  if (error) {
+    if (error.code === '23505') { // unique_violation
+      throw new ApiError(409, 'You are already a member of this trip.');
+    }
+    throw new ApiError(500, 'Could not join the trip.', [error.message]);
+  }
+
+  return data.trip;
+};
+
 
 export const tripService = {
   create,
@@ -143,5 +174,6 @@ export const tripService = {
   getParticipants,
   addParticipants,
   updateParticipantRole,
-  removeParticipant
+  removeParticipant,
+  joinTrip
 };

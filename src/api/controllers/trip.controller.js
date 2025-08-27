@@ -63,6 +63,16 @@ const removeParticipant = asyncHandler(async (req, res) => {
     );
 });
 
+const joinTrip = asyncHandler(async (req, res) => {
+    const { tripId } = req.params;
+    const userId = req.user.id;
+    const joinedTrip = await tripService.joinTrip(userId, tripId);
+
+    res.status(200).json(
+        new ApiResponse(200, joinedTrip, 'Successfully joined the trip.')
+    );
+});
+
 
 export { 
     createTrip, 
@@ -70,5 +80,6 @@ export {
     getTripParticipants,
     addTripParticipants,
     updateParticipantRole,
-    removeParticipant
+    removeParticipant,
+    joinTrip
 };
