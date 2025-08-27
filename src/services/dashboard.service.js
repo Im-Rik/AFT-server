@@ -1,9 +1,6 @@
 import { supabase } from '../config/supabaseClient.js';
 import { ApiError } from '../utils/ApiError.js';
 import {
-    calculateDetailedDebts,
-    applySettlementsToDebts,
-    simplifyDebts,
     calculateSpendingSummary,
     calculateNetBalances,
     generateSettlementPlan
@@ -21,8 +18,12 @@ const getForTrip = async (tripId) => {
 
     if (!participantsData || participantsData.length === 0) {
       return { 
-          participants: [], spendingSummary: [], expenses: [], settlements: [], splits: [],
-          balances: { youOwe: {total: 0, breakdown: []}, youAreOwed: {total: 0, breakdown: []}, groupSettlements: [], groupDebts: [] }
+          participants: [], 
+          spendingSummary: [], 
+          expenses: [], 
+          settlements: [], 
+          splits: [],
+          balances: { youOwe: {total: 0, breakdown: []}, youAreOwed: {total: 0, breakdown: []}, groupSettlements: [] }
       };
     }
     
@@ -48,16 +49,15 @@ const getForTrip = async (tripId) => {
         splitsData = data || [];
     }
 
-    let detailedDebts = calculateDetailedDebts(expensesData, splitsData, users);
-    detailedDebts = applySettlementsToDebts(detailedDebts, settlementsData);
-    
-    const finalDetailedDebts = simplifyDebts(detailedDebts, users, userMap);
+    // --- REFACTORED DEBT CALCULATION ---
+    // We now use a single, robust method to calculate the final, simplified debts.
     const spendingSummaryArray = calculateSpendingSummary(splitsData, users);
     const netBalances = calculateNetBalances(expensesData, splitsData, settlementsData, users);
-    const groupSettlements = generateSettlementPlan(netBalances, userMap);
+    const simplifiedDebts = generateSettlementPlan(netBalances, userMap);
     
     const youOwe = (loggedInUserId) => {
-        const breakdown = finalDetailedDebts
+        // Base the breakdown on the truly simplified list of debts
+        const breakdown = simplifiedDebts
             .filter(s => s.from === loggedInUserId)
             .map(s => ({ to: s.to, toName: s.toName, amount: s.amount }));
         const total = breakdown.reduce((sum, item) => sum + item.amount, 0);
@@ -65,7 +65,8 @@ const getForTrip = async (tripId) => {
     };
     
     const youAreOwed = (loggedInUserId) => {
-        const breakdown = finalDetailedDebts
+        // Base the breakdown on the truly simplified list of debts
+        const breakdown = simplifiedDebts
             .filter(s => s.to === loggedInUserId)
             .map(s => ({ from: s.from, fromName: s.fromName, amount: s.amount }));
         const total = breakdown.reduce((sum, item) => sum + item.amount, 0);
@@ -75,7 +76,8 @@ const getForTrip = async (tripId) => {
     return {
       participants: participantsData,
       spendingSummary: spendingSummaryArray,
-      balances: { youOwe, youAreOwed, groupSettlements, groupDebts: finalDetailedDebts },
+      // We now provide one consistent, simplified list of debts.
+      balances: { youOwe, youAreOwed, groupSettlements: simplifiedDebts },
       expenses: expensesData, 
       settlements: settlementsData, 
       splits: splitsData,

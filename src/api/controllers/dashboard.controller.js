@@ -13,8 +13,7 @@ const getDashboardData = asyncHandler(async (req, res) => {
         balances: {
             youOwe: rawDashboardData.balances.youOwe(loggedInUserId),
             youAreOwed: rawDashboardData.balances.youAreOwed(loggedInUserId),
-            groupSettlements: rawDashboardData.balances.groupSettlements,
-            groupDebts: rawDashboardData.balances.groupDebts
+            groupSettlements: rawDashboardData.balances.groupSettlements
         }
     };
     
