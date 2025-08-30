@@ -73,6 +73,59 @@ const joinTrip = asyncHandler(async (req, res) => {
     );
 });
 
+const getTripLocations = asyncHandler(async (req, res) => {
+    const { tripId } = req.params;
+    const locations = await tripService.getLocationsByTripId(tripId);
+    res.status(200).json(
+        new ApiResponse(200, locations, 'Trip locations fetched successfully.')
+    );
+});
+
+const addTripLocations = asyncHandler(async (req, res) => {
+    const { tripId } = req.params;
+    const { locations } = req.body;
+    const newLocations = await tripService.addLocations(tripId, locations);
+    res.status(201).json(
+        new ApiResponse(201, newLocations, 'Locations added successfully.')
+    );
+});
+
+const updateTripLocation = asyncHandler(async (req, res) => {
+    const { locationId } = req.params;
+    const updateData = req.body;
+    const updatedLocation = await tripService.updateLocation(locationId, updateData);
+    res.status(200).json(
+        new ApiResponse(200, updatedLocation, 'Location updated successfully.')
+    );
+});
+
+const deleteTripLocation = asyncHandler(async (req, res) => {
+    const { locationId } = req.params;
+    await tripService.deleteLocation(locationId);
+    res.status(200).json(
+        new ApiResponse(200, null, 'Location deleted successfully.')
+    );
+});
+
+const deleteTripLocationsByName = asyncHandler(async (req, res) => {
+    const { tripId } = req.params;
+    const { name } = req.body; // We'll get the name from the request body
+    if (!name) {
+        throw new ApiError(400, "Location name is required in the request body.");
+    }
+    await tripService.deleteLocationByName(tripId, name);
+    res.status(200).json(
+        new ApiResponse(200, null, `All instances of '${name}' were deleted.`)
+    );
+});
+
+const clearTripSchedule = asyncHandler(async (req, res) => {
+    const { tripId } = req.params;
+    await tripService.clearSchedule(tripId);
+    res.status(200).json(
+        new ApiResponse(200, null, 'Trip schedule cleared successfully.')
+    );
+});
 
 export { 
     createTrip, 
@@ -81,5 +134,11 @@ export {
     addTripParticipants,
     updateParticipantRole,
     removeParticipant,
-    joinTrip
+    joinTrip,
+    getTripLocations,
+    addTripLocations,
+    updateTripLocation,
+    deleteTripLocation,
+    deleteTripLocationsByName,
+    clearTripSchedule
 };

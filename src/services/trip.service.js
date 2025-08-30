@@ -167,6 +167,95 @@ const joinTrip = async (userId, tripId) => {
   return data.trip;
 };
 
+const getLocationsByTripId = async (tripId) => {
+    const { data, error } = await supabase
+        .from('trip_locations')
+        .select('*')
+        .eq('trip_id', tripId)
+        .order('location_date', { ascending: true })
+        .order('order_index', { ascending: true });
+
+    if (error) {
+        throw new ApiError(500, "Could not retrieve trip locations.", [error.message]);
+    }
+    return data;
+};
+
+const addLocations = async (tripId, locations) => {
+    const locationsToInsert = locations.map(loc => ({
+        trip_id: tripId,
+        name: loc.name,
+        location_date: loc.location_date,
+        order_index: loc.order_index ?? 0
+    }));
+
+    const { data, error } = await supabase
+        .from('trip_locations')
+        .insert(locationsToInsert)
+        .select();
+    
+    if (error) {
+        throw new ApiError(500, "Could not add locations to the trip.", [error.message]);
+    }
+    return data;
+};
+
+const updateLocation = async (locationId, updateData) => {
+    const { data, error } = await supabase
+        .from('trip_locations')
+        .update(updateData)
+        .eq('id', locationId)
+        .select()
+        .single();
+    
+    if (error) {
+        throw new ApiError(500, "Could not update location.", [error.message]);
+    }
+    if (!data) {
+        throw new ApiError(404, "Location not found."); 
+    }
+    return data;
+};
+
+const deleteLocation = async (locationId) => {
+    const { error } = await supabase
+        .from('trip_locations')
+        .delete()
+        .eq('id', locationId);
+
+    if (error) {
+        throw new ApiError(500, "Could not delete location.", [error.message]);
+    }
+
+    return { message: 'Location deleted successfully.' };
+};
+
+const deleteLocationByName = async (tripId, locationName) => {
+    const { error } = await supabase
+        .from('trip_locations')
+        .delete()
+        .match({ trip_id: tripId, name: locationName });
+
+    if (error) {
+        throw new ApiError(500, "Could not bulk delete locations by name.", [error.message]);
+    }
+
+    return { message: `All instances of '${locationName}' deleted successfully.` };
+};
+
+const clearSchedule = async (tripId) => {
+    const { error } = await supabase
+        .from('trip_locations')
+        .delete()
+        .eq('trip_id', tripId)
+        .not('location_date', 'is', null); 
+
+    if (error) {
+        throw new ApiError(500, "Could not clear the trip schedule.", [error.message]);
+    }
+
+    return { message: 'All scheduled locations have been cleared.' };
+};
 
 export const tripService = {
   create,
@@ -175,5 +264,11 @@ export const tripService = {
   addParticipants,
   updateParticipantRole,
   removeParticipant,
-  joinTrip
+  joinTrip,
+  getLocationsByTripId,
+  addLocations,
+  updateLocation,
+  deleteLocation,
+  deleteLocationByName,
+  clearSchedule
 };
