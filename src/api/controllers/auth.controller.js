@@ -47,8 +47,8 @@ const registerStepTwo = asyncHandler(async (req, res) => {
 
     const cookieOptions = {
         httpOnly: true,
-        secure: config.nodeEnv === 'production',
-        sameSite: 'lax',
+        sameSite: 'none',
+        secure: true,
         maxAge: 24 * 60 * 60 * 1000 * 90 // 90 days
     };
 
@@ -66,7 +66,7 @@ const loginUser = asyncHandler(async (req, res) => {
   const { identifier, password } = req.body;
   const user = await authService.loginUserByCredentials(identifier, password);
   const token = generateTokenForUser(user);
-  const cookieOptions = { httpOnly: true, secure: config.nodeEnv === 'production', sameSite: 'lax', maxAge: 24 * 60 * 60 * 1000 * 90 };
+  const cookieOptions = { httpOnly: true, sameSite: 'none', secure: true, maxAge: 24 * 60 * 60 * 1000 * 90 };
   const responsePayload = { user, token };
 
   if (req.headers['x-client-type'] === 'mobile'){
